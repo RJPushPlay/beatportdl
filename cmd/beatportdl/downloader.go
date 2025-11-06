@@ -761,24 +761,41 @@ func (app *application) handleLabelLink(inst *beatport.Beatport, link *beatport.
 				app.semRelease(app.downloadSem)
 			}
 
+			releaseFull, err := inst.GetRelease(release.ID)
+			if err != nil {
+				app.errorLogWrapper(releaseStoreUrl, "fetch full release", err)
+				return
+			}
+			release = *releaseFull
+
 			wg := sync.WaitGroup{}
-			err = ForPaginated[beatport.Track](release.ID, "", inst.GetReleaseTracks, func(track beatport.Track, i int) error {
+			for _, trackUrl := range release.TrackUrls {
+				urlSlice := strings.Split(trackUrl, "/")
+				if len(urlSlice) != 8 {
+					app.errorLogWrapper(trackUrl, "parse track url", errors.New("invalid url"))
+					continue
+				}
+
+				trackID, err := strconv.Atoi(urlSlice[6])
+				if err != nil {
+					app.errorLogWrapper(trackUrl, "parse track id", err)
+					continue
+				}
+
 				app.downloadWorker(&wg, func() {
-					trackStoreUrl := track.StoreUrl()
-					t, err := inst.GetTrack(track.ID)
+					t, err := inst.GetTrack(int64(trackID))
 					if err != nil {
-						app.errorLogWrapper(trackStoreUrl, "fetch full track", err)
+						app.errorLogWrapper(trackUrl, "fetch full track", err)
 						return
 					}
 					t.Release = release
 
 					if err := app.handleTrack(inst, t, releaseDir, cover); err != nil {
-						app.errorLogWrapper(trackStoreUrl, "handle track", err)
+						app.errorLogWrapper(t.StoreUrl(), "handle track", err)
 						return
 					}
 				})
-				return nil
-			})
+			}
 			if err != nil {
 				app.errorLogWrapper(releaseStoreUrl, "handle release tracks", err)
 				os.Remove(cover)
